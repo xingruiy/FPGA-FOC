@@ -1,13 +1,15 @@
-# foc-base — FOC current loop for Arty S7-50 + DRV8316REVM
+# FOC current loop for Arty S7-50 + DRV8316REVM
 
 SystemVerilog FOC **current/torque inner loop** for a 3-phase BLDC
 (Moons ECU16052H24-S002, hall feedback, 24 V bus). Zero Xilinx IP — plain
-SV + raw `XADC`/`BUFG` primitives. Full plan: [docs/plan.md](docs/plan.md).
+SV + raw `XADC`/`BUFG` primitives.
 
 ## Hardware
-||||
+
+| | | |
 |---|---|---|
 |![alt text](./.github/artys7.png)|![alt text](./.github/gatedrive.png)|![alt text](./.github/motor.png)|
+
 Tested on:
 - Arty S7-50 (Xilinx XC7A50T-1FGG676C)
 - DRV8316REVM (24 V, 100 kHz PWM, 24 V, 100 kHz Hall)
