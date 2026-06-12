@@ -2,7 +2,7 @@
 // foc_pkg.sv
 //
 //  Shared package for the FOC current-loop project: numeric types, locked
-//  operating-point parameters (see docs/plan.md), DRV8316 register constants
+//  operating-point parameters (see docs/config.md), DRV8316 register constants
 //  and the fixed-point helper functions used by every math module.
 //
 //  Numeric conventions

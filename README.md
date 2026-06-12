@@ -85,24 +85,73 @@ Readable directly in PuTTY or any terminal at 115200 8N1.
 (sticky bits clear on reset; a live illegal hall code also kills the gates
 in closed loop).
 
-## Operating point (locked — see docs/plan.md)
+## Overview
+
+### Control flow
+
+Every PWM period the core samples the two low-side currents at the counter
+peak, rotates them into the rotor frame, runs two PI loops, and writes the
+gate duties latched at the next boundary (an explicit one-period transport
+delay):
+
+```
+Halls ──► hall_decode ──► hall_angle_est ──► θ, ω      (per-edge cal table, Np=1)
+                                              │
+                              θ ──► sincos_lut ──► sinθ, cosθ
+                                              │
+XADC (raw primitive, dual S/H, phases A+B    │
+      @ cnt_peak) ──► xadc_iface ──► offset_cal ──► ia, ib (ic = −ia−ib)
+                                              │
+                     clarke ──► park ──► id, iq
+                                              │
+   iq_ref (UART), id_ref = 0 ──► pi_d / pi_q ──► vd, vq   (vector-magnitude limit)
+                                              │
+                     inv_park ──► svpwm ──► da, db, dc    (zero-seq inject, MAX_MOD)
+                                              │
+                     pwm_gen ──► 6 gates ──► DRV8316 ──► motor
+                                              │
+                     drv8316_spi ◄── config / fault poll ─┘
+```
+
+`foc_top` maps I/O and builds the **combinational** safe-state
+`oe = enable & nFAULT_sync & ~ocp_trip & ~wd_timeout` between `pwm_gen` and
+the pins (DRVOFF asserted in parallel). `cmd_telemetry` carries the UART
+link plus a 100 ms host watchdog that ramps iq_ref to 0 on silence.
+
+### Operating point (locked)
 
 24 V bus (no 12 V phase), f_sw 80 kHz, MAX_MOD 0.87, current full scale
 ±1.25 A (CSA gain 1.2 V/A), OCP trip 0.9 A, single 100 MHz clock.
-Default gains Kp = 850 (Q4.12), Ki = 130, ≈1.5 kHz bandwidth.
+Default gains Kp = 850 (Q4.12), Ki = 130, ≈1.5 kHz bandwidth. See
+[`docs/config.md`](docs/config.md) for every tunable and
+[`docs/hardware.md`](docs/hardware.md) for the datasheet derivations.
 
-## XDC note
+### Design decisions
 
-Board-level pins follow the Digilent master XDC from memory —
-verify clock (R2/SSTL135), reset (C18), UART (V12/R12) and the PMOD
-JA/JB convention against the real wiring before first programming.
-Analog pins (VAUX1 = B15/A15, VAUX9 = E12/D12) are authoritative from
-the part database; confirm they are exposed on the board's analog header
-(A1/A2, outer row, with the on-board 0–3.3 V → 0–1 V divider).
+- **Current/torque inner loop only.** No speed, position, sensorless, or
+  field-weakening — halls feed the angle directly (pole pairs = 1, so hall
+  edges are absolute over the electrical revolution).
+- **Zero Xilinx IP.** IBUF→BUFG instead of an MMCM/PLL (single clock, no
+  CDC beyond 2-FF synchronizers on halls/nFAULT), a BRAM sin/cos LUT
+  instead of CORDIC IP, and the raw `XADC` primitive instead of the wizard.
+- **Fixed-pair current sampling.** v1 samples phases A and B always
+  (C reconstructed); the XADC's fixed dual-S/H pairs make dynamic
+  per-period phase selection an upgrade path, not v1 work. MAX_MOD 0.87
+  guarantees the low-side sampling window survives.
+- **Numeric format.** Q1.15 for external I/O (currents, voltages, sin/cos),
+  Q3.13 for Clarke/Park/SVPWM internals where √3 scaling would overflow
+  Q1.15; PI gains carry a dedicated Q-format with T_s folded into Ki.
+- **Safety is firmware, not bus voltage.** 24 V from first power-up; the
+  RTL OCP (trips inside the measured ±1.25 A range) plus the bench-supply
+  current limit bound fault energy. See the
+  [bring-up procedure](docs/hardware.md#5-bring-up-procedure-24-v-throughout-each-step-gates-the-next).
+- **xsim only.** SVA assertions are used freely (one reason Verilator was
+  dropped); dedicated DSPs per transform, no multiplier sharing in v1.
 
 ## Docs
 
-+ [Operating-Point Config](docs/motor.md)
-+ [PWM Generation](docs/pwm.md), 
++ [Operating-Point & Config](docs/config.md)
++ [Hardware & Bring-Up](docs/hardware.md)
++ [PWM Generation](docs/pwm.md)
 + [Hall Decoding](docs/hall.md)
 + [FOC Control](docs/foc.md)

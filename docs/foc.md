@@ -4,7 +4,8 @@ The FOC current/torque inner loop: `rtl/foc/` (`foc_pkg`, `sincos_lut`,
 `clarke`, `park`, `inv_park`, `pi_controller`, `svpwm`, `foc_core`) and
 how the pieces compose. Companion documents: `docs/pwm.md` (gate
 generation, sampling instant), `docs/hall.md` (angle source),
-`docs/plan.md` (operating point and rationale).
+`docs/config.md` (operating point) and `docs/hardware.md` (datasheet
+rationale).
 
 ---
 

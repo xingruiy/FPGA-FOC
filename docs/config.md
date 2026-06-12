@@ -5,7 +5,8 @@ one of two places: compile-time parameters in
 [`rtl/foc/foc_pkg.sv`](../rtl/foc/foc_pkg.sv) (the locked operating point)
 and run-time values pushed over UART (gains, hall table, references). This
 document is the reference for both. Rationale and datasheet derivations are
-in [`docs/plan.md`](plan.md); the control math is in [`docs/foc.md`](foc.md).
+in [`docs/hardware.md`](hardware.md); the control math is in
+[`docs/foc.md`](foc.md).
 
 Target machine: **Moons ECU16052H24-S002** — 3-phase BLDC, hall feedback,
 R = 3.16 Ω, L = 0.253 mH, K_t = 14.85 mNm/A, **pole pairs = 1**, rated
