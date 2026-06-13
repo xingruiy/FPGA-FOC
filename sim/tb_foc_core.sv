@@ -21,7 +21,7 @@ module tb_foc_core;
   q15_t ia = 0, ib = 0, ic = 0;
   angle_t theta = 0;
   q15_t iq_ref = 0;
-  logic signed [15:0] kp = 16'sd850, ki = 16'sd130;
+  logic signed [15:0] kp = 16'sd170, ki = 16'sd26;
   q15_t duty_a, duty_b, duty_c, id_meas, iq_meas;
   logic ocp_trip, sat_any;
 

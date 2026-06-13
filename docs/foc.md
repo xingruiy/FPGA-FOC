@@ -27,11 +27,14 @@ In the rotor frame the machine's electrical dynamics are
 $$v_d = R i_d + L \frac{di_d}{dt} - \omega_e L i_q, \qquad
   v_q = R i_q + L \frac{di_q}{dt} + \omega_e L i_d + \omega_e K_e$$
 
-For this motor (R = 3.16 Ω, L = 0.253 mH) each axis is a first-order RL
-plant with $\tau_e = L/R \approx 80\ \mu s$. The cross-coupling and
-back-EMF terms ($\omega_e L i$, $\omega_e K_e$) are treated as
-disturbances and left to the integrators (no feed-forward decoupling in
-v1 — at ≤ 257 Hz electrical they are slow compared to the 1.5 kHz loop).
+For this motor (**per-phase** $R_s$ = 1.58 Ω, $L_s$ = 127 µH — the
+datasheet's 3.16 Ω / 253 µH are phase-to-phase values; the dq plant uses
+per-phase, as the working STM32 reference does) each axis is a
+first-order RL plant with $\tau_e = L_s/R_s \approx 80\ \mu s$. The
+cross-coupling and back-EMF terms ($\omega_e L i$, $\omega_e K_e$) are
+treated as disturbances and left to the integrators (no feed-forward
+decoupling in v1 — at ≤ 257 Hz electrical they are slow compared to the
+1 kHz loop).
 
 ## 2. Number formats (`foc_pkg.sv`)
 
@@ -126,25 +129,51 @@ when a long-saturated loop regains authority).
 ### Tuning math
 
 Plant per axis, in normalized units (1.0 V-unit = 24 V, 1.0 A-unit =
-1.25 A): $G(s) = \frac{1}{R + sL} \cdot \frac{24}{1.25}$ A-unit/V-unit.
-The loop also contains exactly **one PWM period of transport delay**
-($T_s$ = 12.5 µs, §8) plus the ZOH half-period.
+1.25 A): $G(s) = \frac{1}{R_s + sL_s} \cdot \frac{24}{1.25}$
+A-unit/V-unit, with per-phase $R_s$ = 1.58 Ω, $L_s$ = 127 µH. The loop
+also contains exactly **one PWM period of transport delay** ($T_s$ =
+12.5 µs, §8) plus the ZOH half-period.
 
-Default gains (Q4.12): $k_p$ = 850 = 0.2075, $k_i$ = 130 = 0.0317/step.
+Design target (same as the STM32 reference): crossover
+$\omega_c = 2\pi \cdot 1000$ rad/s with the PI zero on the plant pole:
 
-- $k_p$ in physical units: $0.2075 \cdot 24/1.25 \approx 4.0$ V/A, giving
-  a crossover $\omega_c \approx k_p^{phys}/L \approx 16$ krad/s
-  (≈ 2.5 kHz) where the plant is inductance-dominated.
-- Delay phase lag at crossover:
-  $\omega_c \cdot 1.5 T_s \approx 0.3$ rad ≈ 17°, leaving ≈ 70° phase
-  margin.
+$$k_p^{phys} = \omega_c L_s = 6283 \cdot 127\,\mu\text{H} = 0.798\ \text{V/A}, \qquad
+  k_i^{phys} = \omega_c R_s = 9927\ \text{V/(A·s)}$$
+
+Converting to the FPGA normalization ($\times\, 1.25/24$), folding $T_s$
+into $k_i$, and scaling to Q4.12 ($\times\, 4096$):
+
+$$k_p = 0.798 \cdot \tfrac{1.25}{24} \cdot 4096 = 170, \qquad
+  k_i = 9927 \cdot 12.5\,\mu\text{s} \cdot \tfrac{1.25}{24} \cdot 4096 = 26$$
+
+These are the reset defaults in `cmd_telemetry.sv`.
+
+- Delay phase lag at crossover: $\omega_c \cdot 1.5 T_s \approx 0.12$ rad
+  ≈ 7°, leaving ≈ 80° phase margin — comfortable.
 - $k_i/k_p = 0.153$ per sample $\approx T_s/\tau_e = 0.156$: the PI zero
   **cancels the plant pole**, so the closed loop is approximately first
-  order. Measured closed-loop rise in `tb_foc_top` corresponds to
-  ≈ 1.5 kHz bandwidth.
+  order with $\omega_c$ bandwidth. Measured closed-loop 90 % rise in
+  `tb_foc_top` is ≈ 30 PWM periods ≈ 366 µs $= \ln(10)/\omega_c$.
+- The motor measured warm and with leads on the STM32 bench was
+  $R_s \approx 2.83$ Ω; the matching integral gain is $k_i \approx 47$.
+  The cold-datasheet 26 is baked as default; trim at the bench with the
+  runtime `ki` command.
 
-Gains are host-tunable at runtime (UART commands 0x03/0x04) using the
-same Q4.12 scale.
+Gains are host-tunable at runtime (UART `kp`/`ki`) using the same Q4.12
+scale.
+
+**History note**: v1 shipped $k_p$ = 850 / $k_i$ = 130, derived against
+the phase-to-phase R/L — against the true per-phase plant that is a
+≈ 5 kHz crossover with only ≈ 34° of delay-induced margin loss, and the
+closed-loop TB "verified" it against a plant built from the same
+phase-to-phase values. Both were corrected together when aligning with
+the STM32 reference.
+
+The PI state is held cleared while the loop is disabled (`clr` = `!en`
+in `foc_core`): re-enabling starts from zero integrators, the STM32
+`foc_enable()` semantics. Enabling into a spinning rotor therefore
+rushes current against the unopposed back-EMF — enable at standstill, as
+the bring-up procedure does.
 
 ## 6. Output limiting and SVPWM
 

@@ -15,8 +15,8 @@ Stack: **Arty S7-50** (XC7A50T-1FGG676C) + **DRV8316REVM** (24 V) +
 | Fact | Value | Consequence |
 |---|---|---|
 | Pole pairs | **1** | θ_elec = θ_mech; halls are absolute over the full mechanical rev. **But** hall placement error maps 1:1 into electrical angle → calibrate a **per-edge angle table** (12 entries, direction-dependent), not a single offset. |
-| Inductance | 0.253 mH | Very low. At 24 V / 80 kHz / D = 0.5: **~0.30 A p-p ripple ≈ 1.4× rated current.** Mitigate with bench-supply current limit, low-modulation early tests, and OCP headroom budgeting. |
-| Resistance | 3.16 Ω ±10% | τ_e = L/R ≈ 80 µs. With T_s = 12.5 µs and one period transport delay, delay ≈ τ_e/6 — include in PI tuning. |
+| Inductance | 0.253 mH **line-to-line** (per-phase L_s = 127 µH) | Very low. At 24 V / 80 kHz / D = 0.5 the two-phase conduction loop (2·L_s = 254 µH) gives **~0.30 A p-p ripple ≈ 1.4× rated current.** Mitigate with bench-supply current limit, low-modulation early tests, and OCP headroom budgeting. |
+| Resistance | 3.16 Ω ±10% **line-to-line** (per-phase R_s = 1.58 Ω) | τ_e = L_s/R_s ≈ 80 µs. With T_s = 12.5 µs and one period transport delay, delay ≈ τ_e/6 — include in PI tuning. The dq control math uses the **per-phase** values (`docs/foc.md` §5). |
 | Torque constant | 14.85 mNm/A | Telemetry sanity scaling. |
 | Rated current | **0.22 A** | Tiny vs. driver capability. Drives every CSA/ADC/OCP decision. With ±0.15 A ripple peak, worst-case instantaneous current at rated operation ≈ 0.37 A — comfortably under the 0.9 A trip. |
 | Stall current | 7.6 A | Upper-bound sanity only. |

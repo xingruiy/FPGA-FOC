@@ -12,13 +12,25 @@
 //  the "pins"):  oe = enable & nfault & ~ocp_trip & ~wd_timeout.
 //
 //  Checks:
-//   1. UART-injected iq_ref step: iq tracks (rise within ~1 ms for the
-//      ~1.5 kHz design), id -> 0
-//   2. saturating condition (high back-EMF): no windup - after stepping
-//      back down, iq recovers without a large overshoot
-//   3. forced overcurrent (plant poke): ocp_trip latches, gates die
+//   1. UART-injected iq_ref step at standstill: iq tracks (rise within
+//      ~1 ms for the ~1 kHz design), id -> 0; still tracking after the
+//      rotor is ramped to 500 rad/s (the loop follows the back-EMF ramp)
+//   2. saturating condition (back-EMF above the 12.05 V voltage ceiling
+//      at 880 rad/s): no windup - while ramping back down, iq recovers
+//      to the reference without a large overshoot and without an OCP
+//      trip (the speed is sized so the saturated current
+//      (VMAX*24 - BEMF)/R stays inside the 0.9 A OCP)
+//   3. forced overcurrent (plant poke): ocp_trip latches, gates die;
+//      re-arm at standstill (enable into a spinning rotor with an empty
+//      integrator legitimately trips OCP - bench bring-up enables at
+//      standstill, like the STM32 reference)
 //   4. UART silence: watchdog fires, iq_ref ramps to 0, gates die
 //   5. nFAULT injection: gates low combinationally (same cycle)
+//
+//  Rotor speed changes are RAMPED (a real rotor has inertia): the 1 kHz
+//  loop's integrator follows a back-EMF ramp with a lag of
+//  e ~= slope_per_sample/ki, so ~1 rad/s per PWM period keeps the
+//  ramp-following error around 0.1 FS.
 // ============================================================================
 `timescale 1ns / 1ps
 
@@ -76,7 +88,7 @@ module tb_foc_top;
      .tx());
 
   // ---- rotor (idealized angle source) -------------------------------------
-  real theta_e = 0.0, omega_e = 500.0; // rad/s electrical
+  real theta_e = 0.0, omega_e = 0.0; // rad/s electrical
   always @(posedge clk) begin
     theta_e <= theta_e + omega_e * 10.0e-9;
     if (theta_e > PI2) theta_e <= theta_e + omega_e * 10.0e-9 - PI2;
@@ -177,8 +189,31 @@ module tb_foc_top;
     end
   endtask
 
+  // rotor inertia: ramp omega_e by step_pp rad/s per PWM period.
+  // Long ramps outlast the 15 ms host watchdog, so kick it periodically
+  // (a real host pings during any long quiet stretch).
+  int p_since_ping = 0;
+  task automatic ramp_omega(input real target, input real step_pp);
+    while (omega_e != target) begin
+      wait_periods(1);
+      if      (omega_e < target - step_pp) omega_e = omega_e + step_pp;
+      else if (omega_e > target + step_pp) omega_e = omega_e - step_pp;
+      else                                 omega_e = target;
+      if (++p_since_ping > 700) begin
+        p_since_ping = 0;
+        htext("ping");
+      end
+    end
+  endtask
+
   int rise_p;
   q15_t iq_max;
+
+  // diagnostic: snapshot the trip conditions
+  always @(posedge ocp_trip)
+    $display("  DBG OCP at %0t omega_e=%f ia=%f ib=%f ic=%f iq=%0d id=%0d vq=%0d uq=%0d vd=%0d wd=%b",
+             $time, omega_e, ia_A, ib_A, ic_A, iq_meas, id_meas,
+             u_core.vq_lim, u_core.u_q, u_core.vd_lim, wd_timeout);
 
   bit dbg_on = 0;
   int dbg_k = 0;
@@ -197,16 +232,16 @@ module tb_foc_top;
     rst_n = 1;
 
     // gains + enable over UART
-    htext("kp 850");
-    htext("ki 130");
+    htext("kp 170");
+    htext("ki 26");
     htext("enable 1");
-    if (!enable || kp != 16'sd850 || ki != 16'sd130) begin
+    if (!enable || kp != 16'sd170 || ki != 16'sd26) begin
       $display("  MISMATCH uart config enable=%b kp=%0d ki=%0d",
                enable, kp, ki);
       errors++;
     end
 
-    // ---- 1: iq_ref step, track + rise time + id -> 0 ------------------
+    // ---- 1: iq_ref step at standstill, track + rise time + id -> 0 ----
     set_iq(5243); // 0.16 FS = 0.2 A
     rise_p = 0;
     while (iq_meas < 16'sd4719 && rise_p < 200) begin // 90% of ref
@@ -226,31 +261,46 @@ module tb_foc_top;
       $display("  MISMATCH id_meas=%0d", id_meas); errors++;
     end
 
+    // spin up to 500 rad/s (BEMF_q = 7.4 V): integrator follows the ramp
+    ramp_omega(500.0, 1.0);
+    wait_periods(160);
+    if (iq_meas > 5243 + 800 || iq_meas < 5243 - 800) begin
+      $display("  MISMATCH iq_meas=%0d ref=5243 at 500 rad/s", iq_meas);
+      errors++;
+    end
+    if (id_meas > 800 || id_meas < -800) begin
+      $display("  MISMATCH id_meas=%0d at 500 rad/s", id_meas); errors++;
+    end
+
     // ---- 2: saturating condition, then recovery without windup ---------
-    omega_e = 900.0;   // BEMF_q = 13.4 V, vmax*24 = 13.9 V: only ~0.13 FS
-    set_iq(9830);      // of headroom left -> 0.3 FS is unreachable, vq clamps
-    wait_periods(160); // integrator would wind up here without protection
-    // step DOWN while still saturated: anti-windup must let iq fall to the
-    // new reference promptly (a wound-up integrator would hold it high for
-    // ~80 periods)
+    // voltage ceiling: VMAX = 0.87/sqrt(3) -> 12.05 V on the 24 V bus.
+    // At 880 rad/s BEMF_q = 13.1 V > ceiling: the reference is deeply
+    // unreachable (iq settles at (12.05-13.1)/R = -0.64 A, inside the
+    // 0.9 A OCP) and vq rails - the integrator would wind up here
+    // without protection
+    set_iq(9830);          // 0.3 FS = 0.375 A
+    ramp_omega(880.0, 1.0);
+    wait_periods(160);
     // keep the unreachable reference and ramp the speed back down: as the
     // back-EMF falls the reference becomes reachable. A wound-up integrator
     // would overshoot far beyond the reference here; with anti-windup iq
     // just rises to the reference and stays.
     iq_max = -32768;
-    for (int k = 0; k < 130; k++) begin
+    for (int k = 0; k < 600; k++) begin
       wait_periods(1);
-      if (omega_e > 500.0) omega_e = omega_e - 4.0;
+      if (omega_e > 500.0) omega_e = omega_e - 1.0;
+      if (k == 300) htext("ping"); // keep the host watchdog alive
       if (iq_meas > iq_max) iq_max = iq_meas;
       if (ocp_trip) begin
         // a wound-up integrator would drive ~2 A here and trip; with
         // anti-windup the current stays well inside the trip level
         $display("  MISMATCH OCP trip during desaturation (windup!)");
         errors++;
+        break;
       end
     end
     omega_e = 500.0;
-    wait_periods(60);
+    wait_periods(120);
     if (iq_max > 9830 + 6554) begin // transient < 0.2 FS above ref
       $display("  MISMATCH windup overshoot iq_max=%0d ref=9830", iq_max);
       errors++;
@@ -261,7 +311,7 @@ module tb_foc_top;
     end
     // normal step-down at a comfortable operating point settles quickly
     set_iq(2621);
-    wait_periods(40);
+    wait_periods(60);
     if (iq_meas > 2621 + 800 || iq_meas < 2621 - 800) begin
       $display("  MISMATCH post-saturation iq=%0d ref=2621", iq_meas);
       errors++;
@@ -280,7 +330,10 @@ module tb_foc_top;
     if (g_ah || g_al || g_bh || g_bl || g_ch || g_cl) begin
       $display("  MISMATCH gates alive after OCP"); errors++;
     end
-    // re-arm: enable 0 -> 1
+    // re-arm at standstill (gates are dead -> the rotor coasts to a stop;
+    // enabling into a spinning rotor with an empty integrator would
+    // legitimately rush current and re-trip OCP)
+    omega_e = 0.0;
     htext("enable 0");
     htext("enable 1");
     set_iq(2621);
@@ -320,8 +373,17 @@ module tb_foc_top;
     set_iq(2621);
     wait_periods(60);
     // wait until some gate is high, then drop nfault and check same-cycle
-    @(negedge clk);
-    while (!(g_ah || g_bh || g_ch)) @(negedge clk);
+    begin
+      int t_out = 0;
+      @(negedge clk);
+      while (!(g_ah || g_bh || g_ch) && t_out < 10_000) begin
+        @(negedge clk); t_out++;
+      end
+      if (!(g_ah || g_bh || g_ch)) begin
+        $display("  MISMATCH gates never came back for the nFAULT check");
+        errors++;
+      end
+    end
     nfault = 0;
     #1;
     if (g_ah || g_al || g_bh || g_bl || g_ch || g_cl) begin
@@ -331,6 +393,13 @@ module tb_foc_top;
 
     if (errors == 0) $display("TB_PASS: tb_foc_top");
     else             $display("TB_FAIL: tb_foc_top (%0d errors)", errors);
+    $finish;
+  end
+
+  // global timeout: a hung scenario must FAIL, not stall the regression
+  initial begin
+    #150ms;
+    $display("TB_FAIL: tb_foc_top (global timeout)");
     $finish;
   end
 

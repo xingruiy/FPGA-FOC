@@ -225,8 +225,11 @@ module cmd_telemetry
     if (!rst_n) begin
       enable           <= 1'b0;
       iq_ref           <= '0;
-      kp               <= '0;
-      ki               <= '0;
+      // Default current-loop gains: wc = 2*pi*1 kHz against the per-phase
+      // plant (Rs = 1.58 ohm, Ls = 127 uH). kp = wc*Ls * (1.25/24) * 4096,
+      // ki = wc*Rs*Ts * (1.25/24) * 4096. See docs/foc.md "PI tuning".
+      kp               <= 16'sd170;
+      ki               <= 16'sd26;
       cal_we           <= 1'b0;
       cal_addr         <= '0;
       cal_data         <= '0;

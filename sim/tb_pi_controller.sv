@@ -12,7 +12,7 @@
 module tb_pi_controller;
   import foc_pkg::*;
 
-  logic clk = 0, rst_n = 0, strobe = 0;
+  logic clk = 0, rst_n = 0, clr = 0, strobe = 0;
   q15_t sp = 0, fb = 0, applied = 0;
   logic signed [15:0] kp = 0, ki = 0;
   logic out_valid;
@@ -139,6 +139,27 @@ module tb_pi_controller;
     end
     if (int'(u) < -1024) begin
       $display("  MISMATCH windup recovery overshoot: u=%0d", u); errors++;
+    end
+
+    // ---- clr: state held cleared, restart from zero ------------------
+    kp = 0; ki = 2048;
+    step(8192, 0, int'(u));
+    step(8192, 0, int'(u));        // integrator non-zero now
+    @(negedge clk);
+    clr = 1;
+    @(negedge clk);
+    @(negedge clk);
+    if (int'(u) != 0) begin
+      $display("  MISMATCH clr: u=%0d exp=0", u); errors++;
+    end
+    clr = 0; m_acc = 0; m_uprev = 0;
+    step(8192, 0, 0);              // first step after clr: u = I_0 = 0
+    if (int'(u) != 0) begin
+      $display("  MISMATCH post-clr restart: u=%0d exp=0", u); errors++;
+    end
+    step(8192, 0, int'(u));        // integrator ramps again from zero
+    if (int'(u) != 4096) begin
+      $display("  MISMATCH post-clr ramp: u=%0d exp=4096", u); errors++;
     end
 
     if (errors == 0) $display("TB_PASS: tb_pi_controller");

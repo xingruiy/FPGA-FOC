@@ -6,7 +6,8 @@
 //  inverter voltages (duty inputs). The rotor angle/speed are EXTERNAL
 //  inputs (idealized angle source per the plan's non-goals).
 //
-//    R = 3.16 ohm, L = 0.253 mH, Ke = 0.01485 V*s/rad (= 643 rpm/V)
+//    R = 1.58 ohm, L = 0.127 mH (per phase; datasheet line-to-line / 2),
+//    Ke = 0.01485 V*s/rad (= 643 rpm/V)
 //
 //  Euler integration once per `update` (Ts = 12.5 us, tau_e/Ts = 6.4).
 //  Back-EMF convention matches the RTL transforms: e_d = 0,
@@ -20,8 +21,8 @@
 module bldc_plant
   import foc_pkg::*;
 #(
-  parameter real R_OHM = 3.16,
-  parameter real L_H   = 0.253e-3,
+  parameter real R_OHM = 1.58,
+  parameter real L_H   = 0.127e-3,
   parameter real KE    = 0.01485,
   parameter real VBUS  = 24.0,
   parameter real TS    = 12.5e-6

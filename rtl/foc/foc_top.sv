@@ -147,9 +147,11 @@ module foc_top
 
   angle_t theta_hall;
   logic   moving;
+  logic   cnt_peak, update; // from pwm_gen below; cnt_peak ticks the observer
 
   hall_angle_est u_ha (
     .clk, .rst_n, .sector, .sector_valid, .edge_strobe, .dir,
+    .tick(cnt_peak),
     .cal_we, .cal_addr, .cal_data,
     .theta(theta_hall), .omega, .moving);
 
@@ -161,7 +163,6 @@ module foc_top
   // ------------------------------------------------------------------
   q15_t duty_a, duty_b, duty_c;
   logic p_ah, p_al, p_bh, p_bl, p_ch, p_cl;
-  logic cnt_peak, update;
   logic oe;
 
   pwm_gen u_pwm (

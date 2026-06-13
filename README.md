@@ -22,7 +22,7 @@ Tested on:
 ├── rtl/
 │   ├── foc/    foc_pkg, clarke, park, inv_park, pi_controller, svpwm,
 │   │           foc_core, foc_top, clk_rst_gen
-│   ├── hall/   hall_decode, hall_angle_est (12-entry calibrated edge table)
+│   ├── hall/   hall_decode, hall_angle_est (PLL observer, 12-entry cal table)
 │   ├── pwm/    pwm_gen (center-aligned, dead-time, cnt_peak ADC trigger)
 │   ├── spi/    drv8316_spi (config + readback-verify + fault poll)
 │   ├── math/   sincos_lut (+ sincos_lut.mem from scripts/gen_sincos_lut.py)
@@ -122,7 +122,9 @@ link plus a 100 ms host watchdog that ramps iq_ref to 0 on silence.
 
 24 V bus (no 12 V phase), f_sw 80 kHz, MAX_MOD 0.87, current full scale
 ±1.25 A (CSA gain 1.2 V/A), OCP trip 0.9 A, single 100 MHz clock.
-Default gains Kp = 850 (Q4.12), Ki = 130, ≈1.5 kHz bandwidth. See
+Default gains Kp = 170 (Q4.12), Ki = 26 — ω_c = 2π·1 kHz against the
+per-phase plant (R_s = 1.58 Ω, L_s = 127 µH), the same design point as
+the STM32 reference implementation. See
 [`docs/config.md`](docs/config.md) for every tunable and
 [`docs/hardware.md`](docs/hardware.md) for the datasheet derivations.
 

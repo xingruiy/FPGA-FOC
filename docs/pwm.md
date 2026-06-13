@@ -44,11 +44,12 @@ Project values (locked in `foc_pkg.sv`):
 | duty resolution | $\log_2 625 \approx 9.3$ bit | ~0.16 % duty steps |
 | `DEADTIME_CYC` | 20 (200 ns) | above the DRV8316 minimum dead time |
 
-80 kHz was chosen for the very low motor inductance (L = 0.253 mH at
-24 V): the worst-case current ripple at $D = 0.5$ is
+80 kHz was chosen for the very low motor inductance (the two-phase
+conduction loop is $2 L_s$ = 254 µH — the datasheet's line-to-line
+0.253 mH — at 24 V): the worst-case current ripple at $D = 0.5$ is
 
 $$\Delta I_{pp} \approx \frac{V_{bus}}{4 \, L \, F_{pwm}}
-              = \frac{24}{4 \cdot 0.253\,\text{mH} \cdot 80\,\text{kHz}}
+              = \frac{24}{4 \cdot 0.254\,\text{mH} \cdot 80\,\text{kHz}}
               \approx 0.30\ \text{A p-p},$$
 
 accepted because the instantaneous peak at rated current

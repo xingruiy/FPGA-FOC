@@ -9,8 +9,9 @@ in [`docs/hardware.md`](hardware.md); the control math is in
 [`docs/foc.md`](foc.md).
 
 Target machine: **Moons ECU16052H24-S002** — 3-phase BLDC, hall feedback,
-R = 3.16 Ω, L = 0.253 mH, K_t = 14.85 mNm/A, **pole pairs = 1**, rated
-current 0.22 A, on a 24 V bus through a **DRV8316REVM**.
+per-phase R_s = 1.58 Ω, L_s = 127 µH (datasheet phase-to-phase 3.16 Ω /
+0.253 mH ÷ 2), K_t = 14.85 mNm/A, **pole pairs = 1**, rated current
+0.22 A, on a 24 V bus through a **DRV8316REVM**.
 
 ---
 
@@ -73,16 +74,18 @@ reset — reload after every power cycle or fold into a host init script.
 | Value     | Command          | Format            | Default | Notes |
 |-----------|------------------|-------------------|---------|-------|
 | `iq_ref`  | `iq <int16>`     | Q1.15 (1.0 = 1.25 A) | 0    | Torque-producing current setpoint. |
-| `kp`      | `kp <uint16>`    | Q4.12             | 850 (≈0.21) | PI proportional gain. |
-| `ki`      | `ki <uint16>`    | Q4.12             | 130 (≈0.032) | PI integral gain, T_s already folded in. |
+| `kp`      | `kp <uint16>`    | Q4.12             | 170 (≈0.0415) | PI proportional gain. |
+| `ki`      | `ki <uint16>`    | Q4.12             | 26 (≈0.0063) | PI integral gain, T_s already folded in. |
 | hall table| `hall <idx> <ang>` | idx 0–11, angle 0–65535 | 60° grid | Per-edge calibrated angle table. |
 
 ### PI gains
 
-Defaults target **≈1.5 kHz** closed-loop bandwidth against the RL plant
-(τ_e = L/R ≈ 80 µs), validated in `tb_foc_top`. Because T_s is folded into
-`Ki`, retuning is required if `F_SW_HZ` changes. Both axes (d and q) share
-the same gains.
+Defaults target **ω_c = 2π·1 kHz** against the per-phase RL plant
+(R_s = 1.58 Ω, L_s = 127 µH, τ_e ≈ 80 µs), the same design point as the
+working STM32 reference; derivation in `docs/foc.md` §5. Validated in
+`tb_foc_top`. Because T_s is folded into `Ki`, retuning is required if
+`F_SW_HZ` changes. Both axes (d and q) share the same gains. If the motor
+runs warm (bench-measured R_s ≈ 2.83 Ω with leads), `ki 47` matches better.
 
 ### Hall calibration table
 
@@ -98,7 +101,8 @@ mounting.
 
 ## 3. Porting checklist (different motor)
 
-1. Update R, L, K_t in `docs/foc.md` and re-tune `kp`/`ki` for the new τ_e.
+1. Update R_s, L_s, K_t in `docs/foc.md` (use **per-phase** values =
+   phase-to-phase ÷ 2) and re-derive `kp`/`ki` per the §5 tuning math.
 2. Recompute `I_FULLSCALE_A` from the new rated current and CSA gain; keep
    `DRV_CTRL5_CFG` (CSA gain) consistent.
 3. Reset `OCP_TRIP_Q15` to a safe multiple of the new rated current.

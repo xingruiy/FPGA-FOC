@@ -29,6 +29,9 @@ module pi_controller
 (
   input  logic        clk,
   input  logic        rst_n,
+  input  logic        clr,      // hold the controller state cleared
+                                // (loop disabled - STM32 foc_enable
+                                // semantics: re-enable starts fresh)
   input  logic        strobe,   // one PI step per pulse (PWM rate)
   input  q15_t        sp,       // setpoint
   input  q15_t        fb,       // feedback
@@ -76,6 +79,14 @@ module pi_controller
       u         <= '0;
       usat      <= 1'b0;
       out_valid <= 1'b0;
+    end else if (clr) begin
+      s1        <= 1'b0;
+      s2        <= 1'b0;
+      out_valid <= 1'b0;
+      acc       <= '0;
+      u_prev    <= '0;
+      u         <= '0;
+      usat      <= 1'b0;
     end else begin
       s1        <= strobe;
       s2        <= s1;

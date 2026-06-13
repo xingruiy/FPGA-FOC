@@ -15,11 +15,12 @@
 //    t32 duties registered (~0.3 us, noise against the 1250-clk period);
 //        pwm_gen double-buffers them at the next period boundary =>
 //        exactly ONE PWM period of transport delay from sample to applied
-//        voltage. The default gains below assume it (plant tau_e = L/R =
-//        80 us, Ts = 12.5 us, delay = Ts).
+//        voltage. The default gains below assume it (per-phase plant
+//        tau_e = Ls/Rs = 80 us, Ts = 12.5 us, delay = Ts).
 //
-//  Default tuning (target ~1.5 kHz bandwidth, checked against the RL
-//  model in tb_foc_top): kp = 850 (Q4.12, = 0.21), ki = 130 (= 0.032).
+//  Default tuning (target wc = 2*pi*1 kHz, checked against the RL model
+//  in tb_foc_top): kp = 170 (Q4.12, = 0.0415), ki = 26 (= 0.0063).
+//  Derivation in docs/foc.md (per-phase Rs = 1.58 ohm, Ls = 127 uH).
 //
 //  Simplifications (documented):
 //   - SVPWM is normalized to the NOMINAL 24 V bus; the measured vbus is
@@ -122,12 +123,12 @@ module foc_core
   logic pid_ov, piq_ov, pid_sat, piq_sat;
 
   pi_controller u_pi_d (
-    .clk, .rst_n, .strobe(pi_strobe),
+    .clk, .rst_n, .clr(!en), .strobe(pi_strobe),
     .sp(16'sd0), .fb(id_q), .kp, .ki, .applied(vd_app),
     .out_valid(pid_ov), .u(u_d), .usat(pid_sat));
 
   pi_controller u_pi_q (
-    .clk, .rst_n, .strobe(pi_strobe),
+    .clk, .rst_n, .clr(!en), .strobe(pi_strobe),
     .sp(iq_ref), .fb(iq_q), .kp, .ki, .applied(vq_app),
     .out_valid(piq_ov), .u(u_q), .usat(piq_sat));
 
@@ -224,6 +225,15 @@ module foc_core
           lim_v    <= 1'b1;   // strobe inv_park
           lim_busy <= 1'b0;
         end
+      end
+
+      // disabled: duties are forced to 50/50/50, so NOTHING is applied -
+      // the anti-windup feedback must say so, or the first PI step after
+      // re-enable back-injects the stale pre-disable voltage into the
+      // freshly cleared integrator (applied - u_prev = old vq in one step)
+      if (!en) begin
+        vd_app <= '0;
+        vq_app <= '0;
       end
     end
   end

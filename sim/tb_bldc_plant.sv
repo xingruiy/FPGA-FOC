@@ -1,10 +1,11 @@
 // ============================================================================
 // tb_bldc_plant.sv - plant model vs. analytic RL step response.
 //
-//  omega = 0 (no back-EMF), duty step (0.6, 0.4, 0.5):
-//    van = 0.1*24 = 2.4 V  ->  ia(t) = van/R * (1 - exp(-t/tau)),
-//    tau = L/R = 80.06 us. Checked at 1/2/4 tau and steady state, within
+//  omega = 0 (no back-EMF), duty step (0.55, 0.45, 0.5):
+//    van = 0.05*24 = 1.2 V  ->  ia(t) = van/R * (1 - exp(-t/tau)),
+//    tau = L/R = 80.4 us. Checked at 1/2/4 tau and steady state, within
 //    a few % (Euler at Ts/tau = 0.156 under-predicts slightly).
+//    Step sized so ia_ss = 0.759 A stays inside the +/-1.25 A q15 scale.
 //  Also: gates_on = 0 decays currents to ~0.
 // ============================================================================
 `timescale 1ns / 1ps
@@ -12,7 +13,7 @@
 module tb_bldc_plant;
   import foc_pkg::*;
 
-  localparam real R = 3.16, L = 0.253e-3, TS = 12.5e-6;
+  localparam real R = 1.58, L = 0.127e-3, TS = 12.5e-6;
   localparam real TAU = L / R;
 
   logic clk = 0, rst_n = 0, update = 0, gates_on = 1, poke = 0;
@@ -49,7 +50,7 @@ module tb_bldc_plant;
   endtask
 
   function automatic real ia_analytic(input real t);
-    return 2.4 / R * (1.0 - $exp(-t / TAU));
+    return 1.2 / R * (1.0 - $exp(-t / TAU));
   endfunction
 
   int k1, k2, k4;
@@ -58,9 +59,9 @@ module tb_bldc_plant;
     repeat (3) @(negedge clk);
     rst_n = 1;
 
-    // step: van = +2.4 V on phase A
-    duty_a = 16'sd19661; // 0.6
-    duty_b = 16'sd13107; // 0.4
+    // step: van = +1.2 V on phase A
+    duty_a = 16'sd18022; // 0.55
+    duty_b = 16'sd14746; // 0.45
     duty_c = 16'sd16384; // 0.5
 
     k1 = int'(TAU / TS);       // ~6 periods = 1 tau
@@ -73,9 +74,9 @@ module tb_bldc_plant;
 
     // steady state: van/R = 0.759 A; ic = -(ia+ib) and ib = -ia/2 symmetric
     run_periods(40);
-    check_ia(2.4 / R, 0.02);
+    check_ia(1.2 / R, 0.02);
     if (ic_A > -0.2 || ic_A < -0.6) begin
-      // vbn = -2.4 -> ib = -0.759, vcn = 0 -> ic = 0 - actually check sum
+      // vbn = -1.2 -> ib = -0.759, vcn = 0 -> ic = 0 - actually check sum
       ;
     end
     if ((ia_A + ib_A + ic_A) > 1e-9 || (ia_A + ib_A + ic_A) < -1e-9) begin

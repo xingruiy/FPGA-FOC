@@ -79,74 +79,100 @@ The calibration procedure (Phase 6.4) drives the motor open-loop with a
 slow low-current rotating vector, records the commanded θ at each of the
 12 transitions, and writes them back over UART.
 
-## 4. `hall_angle_est` — speed and interpolation
+## 4. `hall_angle_est` — the PLL observer
 
-Between edges the angle is advanced by dead reckoning at the last
-measured speed.
+The estimator is a port of the bench-proven STM32 observer (`hall.c` in
+the reference project): instead of snapping θ to each edge and dead
+reckoning in between, it keeps a continuous estimate $(\hat\theta,
+\hat\omega)$ and applies **soft corrections** at each edge:
 
-### 4.1 Inter-edge speed
+$$\text{per PWM period (tick):} \quad \hat\theta \mathrel{+}= \hat\omega$$
+$$\text{per accepted edge:} \quad
+  \hat\theta \mathrel{+}= K_P \cdot \text{wrap}(\theta_{bnd} - \hat\theta), \qquad
+  \hat\omega \mathrel{+}= K_W \cdot (\omega_{edge} - \hat\omega)$$
 
-At each accepted edge in a consistent direction, the angle distance
-between this edge and the previous one (`traveled`, from the table) is
-divided by the elapsed time `t_cnt` (clocks):
+with $K_P = K_W = 0.3$ (Q0.16 constants `PLL_KP_Q16`/`PLL_KW_Q16`,
+compile-time — the STM32 shipped 0.3/0.3 untouched; a runtime `pllk`
+command is a noted extension point). $\theta_{bnd}$ is the crossed
+boundary's angle from the 12-entry table. `wrap()` is free: the signed
+16-bit difference of two angle codes is exactly the ±180° wrap.
 
-$$inc = \frac{traveled \ll 16}{t\_cnt} \quad \text{[angle codes per clock, Q16]}$$
+Soft correction is what makes the observer robust where snapping is not:
+an uncalibrated or unequal sector boundary, sensor hysteresis, or edge
+jitter each pull $\hat\theta$ by only 30 % of their error, so
+sector-to-sector disagreement averages out instead of being injected
+into the Park transform verbatim.
+
+### 4.1 Fixed-point state
+
+| State | Format | Notes |
+|---|---|---|
+| $\hat\theta$ (`theta_q`) | Q16.16 angle codes (32-bit, wraps mod $2^{32}$) | output is the upper 16 bits |
+| $\hat\omega$ (`omega_q`) | Q16.16 codes/period, signed, clamped ±`OMEGA_MAX_CODES` (512) | fractional bits matter: ≈ 1.4 codes/period at 100 rpm |
+
+The per-period unit makes the integration dt-free: $\hat\omega$ is
+*per PWM period* and the tick (wired to `pwm_gen`'s `cnt_peak` in
+`foc_top`) *is* the period — the STM32's $\hat\theta \mathrel{+}=
+\hat\omega \, dt$ with $dt$ folded in. The 3-clock update finishes long
+before the XADC delivers `sample_valid`, so `foc_core` Parks with the
+just-integrated angle, mirroring the STM32's observer-at-top-of-ISR
+ordering.
+
+### 4.2 Edge speed measurement
+
+At each accepted same-direction adjacent edge, the *calibrated* angle
+distance between this edge and the previous one (`traveled`, from the
+table) is divided by the elapsed time `t_cnt` (clocks):
+
+$$\omega_{edge} = \pm\frac{traveled \ll 16}{t\_cnt} \cdot PERIOD\_CYC
+  \quad \text{[codes/period, Q16.16]}$$
 
 The division runs on a **serial restoring divider, one bit per clock,
-32 clocks total** — invisible next to the ≥ 1000-clock minimum edge
-spacing, and it keeps a 32-bit divider out of the timing graph. The
-result is capped at `INC_MAX` (16 codes/clk ≈ 6× the motor's physical
-speed ceiling) as a sanity bound.
+32 clocks total** — invisible next to the ≥ `MIN_EDGE_CYC` edge spacing.
+The θ and ω corrections for a rate-carrying edge are queued together
+when the divide completes and applied at the next tick.
 
-The rate is *not* computed (and the previous rate is discarded) when the
-edge is the first one, follows a direction reversal, or the traveled
-distance is implausible (> 90°, i.e. missed edges) — one fresh
-same-direction interval must be measured before interpolation resumes.
+Deviation from the STM32 (which assumes a fixed 60° per edge): using the
+calibrated traveled distance makes $\omega_{edge}$ exact even with
+unequal sectors.
 
-### 4.2 Interpolation with overshoot guard
+### 4.3 Edge guards (mapping `hall.c`)
 
-Within a sector:
+| Condition | Action |
+|---|---|
+| edge < `MIN_EDGE_CYC` (50 µs) after the last accepted one | ignored entirely (contact bounce; the decoder's 160 ns debounce is for synchronization glitches, this guard is for mechanical chatter) |
+| non-adjacent sector jump | tracking state updates, **no** PLL handoff |
+| direction reversal | θ correction only; $\hat\omega$ is **zeroed** and re-measured fresh (deviation: the STM32 blends a speed measured *across* the reversal — hysteresis-dominated, deliberately not ported) |
+| first edge after reset or stale | θ correction only (no rate history) |
 
-$$\theta = \theta_{edge} \pm (acc \gg 16), \qquad acc \mathrel{+}= inc \ \text{per clock}$$
+### 4.4 Standstill, cold start
 
-with the **guard**: `acc` is clamped at `dist_q16`, the table distance
-from the current edge to the *next expected* edge. Therefore θ
-asymptotically approaches — but never crosses — the next edge angle
-before that edge actually arrives.
-
-The guard is what makes deceleration safe: dead reckoning at a stale
-(higher) speed would otherwise run θ past the commutation boundary,
-injecting an angle error that the Park transform turns directly into a
-torque error in the wrong direction. The worst case inside one sector is
-then bounded by the sector width itself, and the error resets to zero at
-every edge.
-
-### 4.3 Standstill, reversal, cold start
-
-- **Standstill**: no edge for `TIMEOUT_CYC` (≈ 42 ms — about 4 Hz
-  electrical, well below any useful speed) ⇒ `moving = 0`, ω = 0, θ
-  freezes at its current value.
-- **Reversal**: resets the rate (see 4.1); θ snaps to the new entering
-  edge angle and holds until a fresh interval is measured.
+- **Stale**: no edge for `TIMEOUT_CYC` (**100 ms**, matching the STM32)
+  ⇒ `moving = 0`, ω = 0, θ freezes at the **center of the current
+  sector** and the observer re-arms as at cold start. (The old
+  interpolator held the last θ instead — center-freeze is the minimax
+  choice and the STM32 semantics.)
 - **Before the first edge**: θ outputs the *center* of the current Hall
-  sector — the minimax choice, bounding the initial error to ±30°. After
-  reset (no sector knowledge at all) the reset value is sector 0's
-  center.
+  sector — bounding the initial error to ±30°. After reset (no sector
+  knowledge at all) the reset value is sector 0's center.
 
-### 4.4 Speed output
+### 4.5 Dynamics and units
 
-$$\omega = \pm\frac{inc \cdot PERIOD\_CYC}{2^{16}}
-        \quad \text{[angle codes per PWM period, signed]}$$
-
-with `PERIOD_CYC` $= 2 \cdot PWM\_ARR = 1250$. This unit is chosen
-because every consumer runs at the PWM rate. Conversion for the host:
+ω unit: angle codes per PWM period (`PERIOD_CYC` $= 2 \cdot PWM\_ARR =
+1250$ clocks), chosen because every consumer runs at the PWM rate.
+Conversion for the host:
 
 $$\omega_{elec}\,[\text{rad/s}] = \omega_{codes} \cdot \frac{2\pi}{2^{16}} \cdot F_{sw},
 \qquad \text{rpm} = \omega_{codes} \cdot \frac{60 \cdot F_{sw}}{2^{16}} \ (N_p = 1)$$
 
-Both θ and ω outputs are **registered** — one clock of staleness (10 ns)
-is irrelevant against a 12.5 µs control period, and it keeps the
-interpolation adders/multiplier out of every downstream timing path.
+Convergence is geometric: each edge removes 30 % of the remaining θ and
+ω error, so a speed step settles in roughly 12–20 edges (2–3 electrical
+revolutions). θ advances as a **per-period staircase**; `foc_core`
+samples it once per period at the same tick, so consumers see no
+staircase. Because the boundary error is measured at the tick *after*
+the physical crossing (as on the STM32), the locked estimate carries a
+small systematic offset ≈ ω · ½ period — about 110 codes (0.6°) at the
+motor's speed ceiling.
 
 ## 5. Latency / error budget
 
@@ -154,8 +180,9 @@ interpolation adders/multiplier out of every downstream timing path.
 |---|---|
 | synchronizer + debounce | 18 clk = 180 ns ≈ 0.03° at max speed |
 | speed quantization | 1/t_cnt relative; < 0.1 % above 100 rpm |
-| intra-sector dead reckoning | exact at constant ω; ≤ sector width during accel, guard-bounded during decel |
-| placement / hysteresis | removed by the 12-entry table after calibration |
+| tick staircase | ≤ ω · 1 period; invisible to per-period consumers |
+| correction timing skew | ≈ ω · ½ period systematic (≤ 0.6° at ceiling) |
+| placement / hysteresis | 0.3-soft-corrected uncalibrated; removed by the 12-entry table after calibration |
 
 ## 6. Verification
 
@@ -163,8 +190,13 @@ interpolation adders/multiplier out of every downstream timing path.
 injection shorter than the debounce window, illegal-state flagging,
 direction flips, multi-step jump tolerance.
 
-`sim/tb_hall_angle_est.sv`: constant-speed θ tracking error bound,
-acceleration/deceleration with the guard property checked every clock
-(θ never crosses the pending edge angle), standstill timeout, direction
-reversal re-lock, and a skewed (non-identity) calibration table loaded at
-runtime — including that tracking resumes against the *new* table.
+`sim/tb_hall_angle_est.sv` (PLL semantics — speed changes are ramped,
+as a real rotor's inertia dictates): cold-start center, tick-aligned
+tracking error bound after lock at several speeds including a
+non-integer codes/period speed (fractional $\hat\omega$), a **no-snap
+invariant** (per-tick $|\Delta\theta - \omega|$ bounded — soft
+corrections only), **unequal physical sectors against the identity
+table** (bounded error without calibration — the PLL's reason to exist),
+tight tracking with the calibrated table both directions, bounce-pair
+rejection inside `MIN_EDGE_CYC`, stale freeze at the sector center, and
+direction-reversal re-lock with ω re-measured fresh.
