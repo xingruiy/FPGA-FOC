@@ -4,14 +4,14 @@
 //  3-phase center-aligned complementary PWM with dead-time insertion.
 //
 //  - One shared up/down counter: 0 .. ARR .. 0, period = 2*ARR clk cycles
-//    (80 kHz with ARR = 625 at 100 MHz).
 //  - Duties are Q1.15 in [0, 1); compare values ccr = round(duty * ARR)
-//    are double-buffered: they load only at the period boundary (update),
-//    so mid-period duty changes are glitch-free.
+//    are latched into a per-phase shadow register at the period boundary
+//    (update), so mid-period duty changes are glitch-free. Callers must
+//    hold duty_* stable across that boundary (registered, same clock).
 //  - Active level: high-side on while (cnt < ccr), so the high-side pulse
 //    is centered on the counter trough and the low-side conduction window
 //    is centered on the counter PEAK, where `cnt_peak` strobes - that is
-//    the XADC sampling trigger for the DRV8316 low-side CSAs.
+//    the XADC sampling trigger for low-side CSAs.
 //  - Dead time: after either gate switches off, the complementary gate
 //    waits exactly DT cycles with both off before switching on.
 //  - oe[x] = 0 forces both gates of that phase low within 1 clk and
@@ -67,7 +67,7 @@ module pwm_gen
   assign update   = en && (cnt == '0);
 
   // ------------------------------------------------------------------
-  // Duty -> compare value, double-buffered at the period boundary
+  // Duty -> compare value, latched into a shadow register at the period boundary
   // ------------------------------------------------------------------
   function automatic logic [CNT_W-1:0] ccr_of(input q15_t d);
     logic signed [31:0] p;

@@ -13,10 +13,10 @@
 //    t27 limiter done -> inv_park strobed with limited vd/vq
 //    t29 inv_park done -> svpwm strobed
 //    t32 duties registered (~0.3 us, noise against the 1250-clk period);
-//        pwm_gen double-buffers them at the next period boundary =>
-//        exactly ONE PWM period of transport delay from sample to applied
-//        voltage. The default gains below assume it (per-phase plant
-//        tau_e = Ls/Rs = 80 us, Ts = 12.5 us, delay = Ts).
+//        pwm_gen latches them into its shadow register at the next period
+//        boundary => exactly ONE PWM period of transport delay from
+//        sample to applied voltage. The default gains below assume it
+//        (per-phase plant tau_e = Ls/Rs = 80 us, Ts = 12.5 us, delay = Ts).
 //
 //  Default tuning (target wc = 2*pi*1 kHz, checked against the RL model
 //  in tb_foc_top): kp = 170 (Q4.12, = 0.0415), ki = 26 (= 0.0063).

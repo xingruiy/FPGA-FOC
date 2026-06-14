@@ -54,7 +54,7 @@ module xadc_iface
     .INIT_41(16'h4F0F), // Config1: SEQ=0100 simultaneous, alarms disabled
     .INIT_42(16'h0400), // Config2: DCLK divider = 4
     .INIT_48(16'h0000), // no internal channels in the sequence
-    .INIT_49(16'h0202), // VAUX1 (bit 1) + VAUX9 (bit 9) simultaneous pair
+    .INIT_49(16'h0002), // VAUX1 (bit 1) + VAUX9 (bit 9) simultaneous pair
     .INIT_4A(16'h0000), // no averaging
     .INIT_4B(16'h0000),
     .INIT_4C(16'h0000),
